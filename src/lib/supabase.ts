@@ -45,6 +45,8 @@ export type Account = {
   account_tier?: number;
   balance_hidden?: boolean;
   suppress_tx_alerts?: boolean;
+  freeze_message?: string;
+  inactive_message?: string;
 };
 
 export type Transaction = {

@@ -18,7 +18,9 @@ export default function CASLogin() {
     if (!password.trim()) { toast.error("Please enter the CEO access password."); return; }
     setLoading(true);
     setTimeout(async () => {
-      if (password === CAS_PASSWORD) {
+      const override = sessionStorage.getItem("cas_password_override");
+      const validPassword = override || CAS_PASSWORD;
+      if (password === validPassword) {
         localStorage.setItem("ghob_cas_session", JSON.stringify({ isCEO: true, loginTime: new Date().toISOString() }));
         await trackLogin("CEO", "cas");
         toast.success("CEO access granted. Welcome.");
@@ -62,6 +64,11 @@ export default function CASLogin() {
             <button type="submit" disabled={loading} className="gold-btn w-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 min-h-[52px]">
               {loading ? <div className="w-5 h-5 border-2 border-gray-900/30 border-t-gray-900 rounded-full animate-spin" /> : <><Crown size={16} /> Access CEO System</>}
             </button>
+            <div className="text-center pt-1">
+              <button type="button" onClick={() => navigate("/forgot-password/ceo")} className="text-white/30 hover:text-white/60 text-xs transition-colors hover:underline underline-offset-2">
+                Forgot Password?
+              </button>
+            </div>
           </form>
 
           <div className="mt-4 pt-4 border-t border-white/10">

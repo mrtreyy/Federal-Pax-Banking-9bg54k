@@ -30,6 +30,7 @@ import CurrencyConverterWidget from "@/components/features/CurrencyConverterWidg
 import CASPlatformControls from "@/components/features/CASPlatformControls";
 import CASAuditLogPanel from "@/components/features/CASAuditLogPanel";
 import CASCurrencySettings from "@/components/features/CASCurrencySettings";
+import FreezeMessageModal from "@/components/features/FreezeMessageModal";
 
 type CASTab = "home" | "accounts" | "chats" | "notifications";
 type AcctDrillTab = "info" | "transactions" | "notifications";
@@ -70,7 +71,7 @@ export default function CASDashboard() {
   const [showCreateADP, setShowCreateADP] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
   const [showScheduled, setShowScheduled] = useState(false);
-  const [editTarget, setEditTarget] = useState<Parameters<typeof CASEditAccountModal>[0]["target"] | null>(null);
+  const [editAccountTarget, setEditAccountTarget] = useState<Account | null>(null);
   const [timerTarget, setTimerTarget] = useState<TimerTarget | null>(null);
   const [timerHours, setTimerHours] = useState("24");
   const [showCardReview, setShowCardReview] = useState(false);
@@ -81,6 +82,15 @@ export default function CASDashboard() {
   const [showPlatformControls, setShowPlatformControls] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [showCurrencySettings, setShowCurrencySettings] = useState(false);
+  // Freeze/Inactive message modal
+  const [freezeModalTarget, setFreezeModalTarget] = useState<{
+    table: "banking_accounts" | "administration_plus" | "sub_admin_portals";
+    id: string;
+    name: string;
+    field: "is_frozen" | "is_inactive";
+    currentValue: boolean;
+    currentMessage?: string;
+  } | null>(null);
   // Account drill tab
   const [acctDrillTab, setAcctDrillTab] = useState<AcctDrillTab>("info");
   const [acctNotifications, setAcctNotifications] = useState<BankingNotification[]>([]);
@@ -113,7 +123,6 @@ export default function CASDashboard() {
     if (notifRes.data) setNotifications(notifRes.data);
     if (actRes.data) setLoginActivity(actRes.data);
     if (auditRes.data) setAuditLog(auditRes.data);
-    // Platform totals
     const [sg, la, bp] = await Promise.all([
       supabase.from("savings_goals").select("current_amount"),
       supabase.from("loan_applications").select("amount").in("status", ["approved"]),
@@ -159,18 +168,37 @@ export default function CASDashboard() {
     if (w) { w.document.write(html); w.document.close(); }
   };
 
+  const handleToggleStatusWithMessage = (
+    table: "banking_accounts" | "administration_plus" | "sub_admin_portals",
+    id: string, name: string,
+    field: "is_frozen" | "is_closed" | "is_inactive",
+    currentValue: boolean,
+    currentMessage?: string
+  ) => {
+    if (!currentValue && table === "banking_accounts" && (field === "is_frozen" || field === "is_inactive")) {
+      setFreezeModalTarget({ table, id, name, field: field as "is_frozen" | "is_inactive", currentValue, currentMessage });
+      return;
+    }
+    handleToggleStatus(table, id, name, field, currentValue, undefined);
+  };
+
   const handleToggleStatus = async (
     table: "banking_accounts" | "administration_plus" | "sub_admin_portals",
     id: string, name: string,
     field: "is_frozen" | "is_closed" | "is_inactive",
-    currentValue: boolean
+    currentValue: boolean,
+    customMessage?: string
   ) => {
     const update: Record<string, unknown> = { [field]: !currentValue, ceo_locked: !currentValue };
-    if (table === "banking_accounts") update.updated_at = new Date().toISOString();
+    if (table === "banking_accounts") {
+      update.updated_at = new Date().toISOString();
+      if (field === "is_frozen") update.freeze_message = !currentValue ? (customMessage || "") : "";
+      else if (field === "is_inactive") update.inactive_message = !currentValue ? (customMessage || "") : "";
+    }
     const { error } = await supabase.from(table).update(update).eq("id", id);
     if (!error) {
       const action = currentValue ? `ceo_un${field.replace("is_", "")}` : `ceo_${field.replace("is_", "")}`;
-      await logAudit(action, id, name, {}, "CEO", "cas");
+      await logAudit(action, id, name, { customMessage }, "CEO", "cas");
       toast.success(`${name}: ${currentValue ? "status restored" : field.replace("is_", "") + " applied"}.`);
       fetchAll();
       if (selectedAccount?.id === id) {
@@ -216,11 +244,7 @@ export default function CASDashboard() {
 
   const fetchAccountNotifications = async (accountId: string) => {
     setLoadingAcctNotifs(true);
-    const { data } = await supabase
-      .from("banking_notifications")
-      .select("*")
-      .eq("account_id", accountId)
-      .order("created_at", { ascending: false });
+    const { data } = await supabase.from("banking_notifications").select("*").eq("account_id", accountId).order("created_at", { ascending: false });
     if (data) setAcctNotifications(data);
     setLoadingAcctNotifs(false);
   };
@@ -297,9 +321,7 @@ export default function CASDashboard() {
             <Timer size={20} style={{ color: "hsl(43,85%,60%)" }} />
             <div className="text-white font-bold">Set Auto-Restore Timer</div>
           </div>
-          <div className="text-white/50 text-sm mb-4">
-            Set how many hours until <strong className="text-white">{timerTarget.name}</strong> auto-reverts from {timerTarget.statusField.replace("is_", "")} status.
-          </div>
+          <div className="text-white/50 text-sm mb-4">Set how many hours until <strong className="text-white">{timerTarget.name}</strong> auto-reverts from {timerTarget.statusField.replace("is_", "")} status.</div>
           <div className="mb-4">
             <label className="text-white/60 text-xs mb-1.5 block">Hours until auto-restore</label>
             <input type="number" className="dark-input text-lg font-bold" value={timerHours} onChange={e => setTimerHours(e.target.value)} min="0.5" step="0.5" />
@@ -324,10 +346,9 @@ export default function CASDashboard() {
             <div className="text-white font-bold">{selectedAccount.account_name}</div>
             <div className="text-white/40 text-xs">{selectedAccount.account_number} · {selectedAccount.currency}</div>
           </div>
-          <button onClick={() => setEditTarget({ type: "individual", data: selectedAccount })} className="text-white/40 hover:text-yellow-400"><Edit2 size={16} /></button>
+          <button onClick={() => setEditAccountTarget(selectedAccount)} className="text-white/40 hover:text-yellow-400"><Edit2 size={16} /></button>
         </div>
         <div className="px-4 pt-4 space-y-4 pb-4">
-          {/* Profile card */}
           <div className="navy-card p-4">
             <div className="flex items-center gap-3 mb-4">
               {selectedAccount.profile_picture ? (
@@ -370,38 +391,31 @@ export default function CASDashboard() {
             ))}
           </div>
 
-          {/* Drill Tabs */}
           <div className="flex gap-2">
             {(["info", "transactions", "notifications"] as AcctDrillTab[]).map(t => (
-              <button key={t}
-                onClick={() => {
-                  setAcctDrillTab(t);
-                  if (t === "notifications") fetchAccountNotifications(selectedAccount.id);
-                }}
+              <button key={t} onClick={() => { setAcctDrillTab(t); if (t === "notifications") fetchAccountNotifications(selectedAccount.id); }}
                 className="flex-1 py-2.5 rounded-2xl text-xs font-semibold"
-                style={acctDrillTab === t ? { background: "hsl(43,85%,55%)", color: "#111" } : { background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}
-              >
+                style={acctDrillTab === t ? { background: "hsl(43,85%,55%)", color: "#111" } : { background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}>
                 {t === "notifications" ? "User Notifs" : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
           </div>
 
-          {/* INFO TAB */}
           {acctDrillTab === "info" && (
             <div className="navy-card p-4">
               <div className="text-white/50 text-xs font-semibold uppercase tracking-wide mb-3">CEO Account Controls</div>
               <div className="grid grid-cols-3 gap-2 mb-3">
-                <button onClick={() => handleToggleStatus("banking_accounts", selectedAccount.id, selectedAccount.account_name, "is_frozen", selectedAccount.is_frozen || false)}
+                <button onClick={() => handleToggleStatusWithMessage("banking_accounts", selectedAccount.id, selectedAccount.account_name, "is_frozen", selectedAccount.is_frozen || false, (selectedAccount as Record<string, unknown>).freeze_message as string)}
                   className="py-2.5 rounded-2xl text-xs font-medium"
                   style={{ background: selectedAccount.is_frozen ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.07)", color: selectedAccount.is_frozen ? "#60a5fa" : "rgba(255,255,255,0.6)" }}>
                   {selectedAccount.is_frozen ? <><Unlock size={11} className="inline mr-1" />Unfreeze</> : <><Snowflake size={11} className="inline mr-1" />Freeze</>}
                 </button>
-                <button onClick={() => handleToggleStatus("banking_accounts", selectedAccount.id, selectedAccount.account_name, "is_closed", selectedAccount.is_closed || false)}
+                <button onClick={() => handleToggleStatus("banking_accounts", selectedAccount.id, selectedAccount.account_name, "is_closed", selectedAccount.is_closed || false, undefined)}
                   className="py-2.5 rounded-2xl text-xs font-medium"
                   style={{ background: selectedAccount.is_closed ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.07)", color: selectedAccount.is_closed ? "#f87171" : "rgba(255,255,255,0.6)" }}>
                   {selectedAccount.is_closed ? <><Unlock size={11} className="inline mr-1" />Open</> : <><XCircle size={11} className="inline mr-1" />Close</>}
                 </button>
-                <button onClick={() => handleToggleStatus("banking_accounts", selectedAccount.id, selectedAccount.account_name, "is_inactive", selectedAccount.is_inactive || false)}
+                <button onClick={() => handleToggleStatusWithMessage("banking_accounts", selectedAccount.id, selectedAccount.account_name, "is_inactive", selectedAccount.is_inactive || false, (selectedAccount as Record<string, unknown>).inactive_message as string)}
                   className="py-2.5 rounded-2xl text-xs font-medium"
                   style={{ background: selectedAccount.is_inactive ? "rgba(251,146,60,0.2)" : "rgba(255,255,255,0.07)", color: selectedAccount.is_inactive ? "#fb923c" : "rgba(255,255,255,0.6)" }}>
                   {selectedAccount.is_inactive ? <><Power size={11} className="inline mr-1" />Activate</> : <><Power size={11} className="inline mr-1" />Inactive</>}
@@ -422,7 +436,6 @@ export default function CASDashboard() {
             </div>
           )}
 
-          {/* TRANSACTIONS TAB */}
           {acctDrillTab === "transactions" && (
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -455,7 +468,6 @@ export default function CASDashboard() {
             </div>
           )}
 
-          {/* USER NOTIFICATIONS TAB */}
           {acctDrillTab === "notifications" && (
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -473,10 +485,7 @@ export default function CASDashboard() {
               ) : (
                 <div className="space-y-2">
                   {acctNotifications.map(notif => (
-                    <div key={notif.id} className="p-3 rounded-2xl" style={{
-                      background: notif.is_read ? "rgba(255,255,255,0.03)" : "rgba(200,155,50,0.05)",
-                      border: `1px solid ${notif.is_read ? "rgba(255,255,255,0.06)" : "rgba(200,155,50,0.2)"}`
-                    }}>
+                    <div key={notif.id} className="p-3 rounded-2xl" style={{ background: notif.is_read ? "rgba(255,255,255,0.03)" : "rgba(200,155,50,0.05)", border: `1px solid ${notif.is_read ? "rgba(255,255,255,0.06)" : "rgba(200,155,50,0.2)"}` }}>
                       <div className="flex items-start gap-2">
                         <div className="flex-1 min-w-0">
                           <div className="text-white font-semibold text-xs">{notif.title}</div>
@@ -487,11 +496,9 @@ export default function CASDashboard() {
                             <span className={`text-xs font-medium ${notif.is_read ? "text-white/20" : "text-yellow-400/70"}`}>{notif.is_read ? "Read" : "Unread"}</span>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeleteNotificationWithSync(notif, selectedAccount.id)}
+                        <button onClick={() => handleDeleteNotificationWithSync(notif, selectedAccount.id)}
                           className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium"
-                          style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.2)" }}
-                        >
+                          style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.2)" }}>
                           <Trash2 size={11} /> Del
                         </button>
                       </div>
@@ -505,7 +512,12 @@ export default function CASDashboard() {
 
         {selectedTx && <TransactionReceiptModal tx={{ ...selectedTx, account_name: selectedAccount.account_name, currency: selectedAccount.currency }} onClose={() => setSelectedTx(null)} />}
         {editTx && <EditTransactionModal tx={editTx} onClose={() => setEditTx(null)} onSuccess={fetchAll} />}
-        {editTarget && <CASEditAccountModal target={editTarget} onClose={() => setEditTarget(null)} onSuccess={() => { fetchAll(); setEditTarget(null); supabase.from("banking_accounts").select("*").eq("id", selectedAccount.id).single().then(({ data }) => { if (data) setSelectedAccount(data); }); }} />}
+        {editAccountTarget && <CASEditAccountModal account={editAccountTarget} onClose={() => setEditAccountTarget(null)} onSuccess={() => { fetchAll(); setEditAccountTarget(null); supabase.from("banking_accounts").select("*").eq("id", selectedAccount.id).single().then(({ data }) => { if (data) setSelectedAccount(data); }); }} />}
+        {freezeModalTarget && (
+          <FreezeMessageModal accountName={freezeModalTarget.name} action={freezeModalTarget.field === "is_frozen" ? "freeze" : "inactive"} currentMessage={freezeModalTarget.currentMessage}
+            onClose={() => setFreezeModalTarget(null)}
+            onConfirm={(msg) => { handleToggleStatus(freezeModalTarget.table, freezeModalTarget.id, freezeModalTarget.name, freezeModalTarget.field, freezeModalTarget.currentValue, msg); setFreezeModalTarget(null); }} />
+        )}
         <CASBottomNav active={tab} onHome={() => { setDrillView(null); setSelectedAccount(null); setTab("home"); }} onAccounts={() => { setDrillView(null); setSelectedAccount(null); setTab("accounts"); }} onChats={() => { setDrillView(null); setSelectedAccount(null); setTab("chats"); }} onNotifications={() => { setDrillView(null); setSelectedAccount(null); setTab("notifications"); }} notifCount={unreadNotifs} chatCount={unreadChats} />
       </div>
     );
@@ -518,11 +530,7 @@ export default function CASDashboard() {
       <div className="min-h-screen pb-24" style={{ background: "hsl(220,45%,8%)" }}>
         <div className="sticky top-0 z-30 flex items-center gap-3 px-5 pt-12 pb-4" style={{ background: "hsl(220,55%,12%)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
           <button onClick={() => { setDrillView(null); setSelectedAP(null); }} className="text-white/40 hover:text-white"><ArrowLeft size={20} /></button>
-          <div className="flex-1">
-            <div className="text-white font-bold">{selectedAP.name}</div>
-            <div className="text-white/40 text-xs">Administration Plus · Tier {selectedAP.tier}</div>
-          </div>
-          <button onClick={() => setEditTarget({ type: "ap", data: selectedAP })} className="text-white/40 hover:text-yellow-400"><Edit2 size={16} /></button>
+          <div className="flex-1"><div className="text-white font-bold">{selectedAP.name}</div><div className="text-white/40 text-xs">Administration Plus · Tier {selectedAP.tier}</div></div>
         </div>
         <div className="px-4 pt-4 space-y-4 pb-4">
           <div className="navy-card p-4 grid grid-cols-2 gap-3">
@@ -560,7 +568,6 @@ export default function CASDashboard() {
             })
           )}
         </div>
-        {editTarget && <CASEditAccountModal target={editTarget} onClose={() => setEditTarget(null)} onSuccess={() => { fetchAll(); setEditTarget(null); }} />}
         <CASBottomNav active={tab} onHome={() => { setDrillView(null); setSelectedAP(null); setTab("home"); }} onAccounts={() => { setDrillView(null); setSelectedAP(null); setTab("accounts"); }} onChats={() => setTab("chats")} onNotifications={() => setTab("notifications")} notifCount={unreadNotifs} chatCount={unreadChats} />
       </div>
     );
@@ -574,7 +581,6 @@ export default function CASDashboard() {
         <div className="sticky top-0 z-30 flex items-center gap-3 px-5 pt-12 pb-4" style={{ background: "hsl(220,55%,12%)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
           <button onClick={() => { setDrillView(selectedAP ? "ap" : null); setSelectedADP(null); }} className="text-white/40 hover:text-white"><ArrowLeft size={20} /></button>
           <div className="flex-1"><div className="text-white font-bold">{selectedADP.name}</div><div className="text-white/40 text-xs">Admin Portal · {adpAccounts.length}/{selectedADP.max_individual} accounts</div></div>
-          <button onClick={() => setEditTarget({ type: "adp", data: selectedADP })} className="text-white/40 hover:text-yellow-400"><Edit2 size={16} /></button>
         </div>
         <div className="px-4 pt-4 space-y-4 pb-4">
           <div className="navy-card p-4">
@@ -602,7 +608,6 @@ export default function CASDashboard() {
             </button>
           ))}
         </div>
-        {editTarget && <CASEditAccountModal target={editTarget} onClose={() => setEditTarget(null)} onSuccess={() => { fetchAll(); setEditTarget(null); }} />}
         <CASBottomNav active={tab} onHome={() => { setDrillView(null); setSelectedADP(null); setTab("home"); }} onAccounts={() => { setDrillView(null); setSelectedADP(null); setTab("accounts"); }} onChats={() => setTab("chats")} onNotifications={() => setTab("notifications")} notifCount={unreadNotifs} chatCount={unreadChats} />
       </div>
     );
@@ -872,7 +877,19 @@ export default function CASDashboard() {
       {showCreateAP && <CASCreatePortalModal type="ap" onClose={() => setShowCreateAP(false)} onSuccess={fetchAll} />}
       {showCreateADP && <CASCreatePortalModal type="adp" onClose={() => setShowCreateADP(false)} onSuccess={fetchAll} />}
       {showScheduled && <CASScheduledTxModal accounts={accounts} onClose={() => setShowScheduled(false)} onSuccess={fetchAll} />}
-      {editTarget && <CASEditAccountModal target={editTarget} onClose={() => setEditTarget(null)} onSuccess={fetchAll} />}
+      {editAccountTarget && <CASEditAccountModal account={editAccountTarget} onClose={() => setEditAccountTarget(null)} onSuccess={fetchAll} />}
+      {freezeModalTarget && (
+        <FreezeMessageModal
+          accountName={freezeModalTarget.name}
+          action={freezeModalTarget.field === "is_frozen" ? "freeze" : "inactive"}
+          currentMessage={freezeModalTarget.currentMessage}
+          onClose={() => setFreezeModalTarget(null)}
+          onConfirm={(msg) => {
+            handleToggleStatus(freezeModalTarget.table, freezeModalTarget.id, freezeModalTarget.name, freezeModalTarget.field, freezeModalTarget.currentValue, msg);
+            setFreezeModalTarget(null);
+          }}
+        />
+      )}
 
       <CASBottomNav active={tab} onHome={() => setTab("home")} onAccounts={() => setTab("accounts")} onChats={() => setTab("chats")} onNotifications={() => setTab("notifications")} notifCount={unreadNotifs} chatCount={unreadChats} />
     </div>

@@ -7,7 +7,6 @@ import UserBottomNav from "@/components/features/UserBottomNav";
 import TransactionReceiptModal from "@/components/features/TransactionReceiptModal";
 import TransferModal from "@/components/features/TransferModal";
 import DepositInfoModal from "@/components/features/DepositInfoModal";
-import UserProfileModal from "@/components/features/UserProfileModal";
 import TotalInOutModal from "@/components/features/TotalInOutModal";
 import GHOBChatSupport from "@/components/features/GHOBChatSupport";
 import VirtualCardPage from "@/components/features/VirtualCardPage";
@@ -23,7 +22,7 @@ import LoanApplicationPage from "@/components/features/LoanApplicationPage";
 import {
   ArrowDownLeft, ArrowUpRight, Eye, EyeOff, Snowflake, XCircle,
   Phone, ChevronRight, Bell, Search, Filter, X, Download, FileText, CreditCard,
-  Star, TrendingUp, Shield, Target, Zap, Users, BookOpen
+  Star, TrendingUp, Shield, Target, Zap, Users, BookOpen, Menu, Lock, Info, LogOut, Mail
 } from "lucide-react";
 import bankLogo from "@/assets/bankunited-logo.jpg";
 
@@ -33,6 +32,8 @@ const TIER_NAMES: Record<number, string> = {
 const TIER_COLORS: Record<number, string> = {
   1: "rgba(255,255,255,0.4)", 2: "#94a3b8", 3: "#c89b3c", 4: "#60a5fa", 5: "#a855f7"
 };
+
+const BANK_EMAIL = "bankunitedbku@gmail.com";
 
 export default function UserDashboard() {
   const navigate = useNavigate();
@@ -45,7 +46,6 @@ export default function UserDashboard() {
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [showTransfer, setShowTransfer] = useState(false);
   const [showDeposit, setShowDeposit] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
   const [showTotalIn, setShowTotalIn] = useState(false);
   const [showTotalOut, setShowTotalOut] = useState(false);
   const [showConverter, setShowConverter] = useState(false);
@@ -69,6 +69,8 @@ export default function UserDashboard() {
   const [showTxFilter, setShowTxFilter] = useState(false);
   const [showStatement, setShowStatement] = useState(false);
   const [statementMonth, setStatementMonth] = useState(new Date().toISOString().slice(0, 7));
+  // Hamburger drawer
+  const [showDrawer, setShowDrawer] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem("ghob_user_session");
@@ -81,10 +83,12 @@ export default function UserDashboard() {
     fetchTransactions(session.id);
     fetchNotifications(session.id);
     trackLogin(session.account_name, "individual_directive_user", session.id);
-    // Load exchange rates
-    fetch("https://api.exchangerate-api.com/v4/latest/USD").then(r => r.json()).then(d => { if (d.rates) setExchangeRates(d.rates); }).catch(() => {
-      setExchangeRates({ EUR: 0.92, GBP: 0.79, JPY: 149.5, AUD: 1.53, CAD: 1.36, CHF: 0.88, CNY: 7.24, NGN: 1580, ZAR: 18.6, INR: 83.4, BRL: 4.97, MXN: 17.2, AED: 3.67, SAR: 3.75 });
-    });
+    fetch("https://api.exchangerate-api.com/v4/latest/USD")
+      .then(r => r.json())
+      .then(d => { if (d.rates) setExchangeRates(d.rates); })
+      .catch(() => {
+        setExchangeRates({ EUR: 0.92, GBP: 0.79, JPY: 149.5, AUD: 1.53, CAD: 1.36, CHF: 0.88, CNY: 7.24, NGN: 1580, ZAR: 18.6, INR: 83.4, BRL: 4.97, MXN: 17.2, AED: 3.67, SAR: 3.75 });
+      });
     supabase.from("banking_accounts").update({ last_login_at: new Date().toISOString(), last_login_device: navigator.userAgent.slice(0, 100), updated_at: new Date().toISOString() }).eq("id", session.id);
   }, [navigate]);
 
@@ -99,12 +103,14 @@ export default function UserDashboard() {
     if (data) {
       setAccount(data);
       localStorage.setItem("ghob_user_session", JSON.stringify(data));
-      // Load enabled currencies from DB
       const dbCurrencies = (data as Record<string, unknown>).enabled_currencies as string[] | null;
       const currencies = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : [data.currency || "USD"];
       setEnabledCurrencies(currencies);
-      // Set active currency to account base currency if not already set
-      setActiveCurrency(prev => prev && currencies.includes(prev) ? prev : data.currency || "USD");
+      setActiveCurrency(prev => {
+        // If current active currency is still valid, keep it. Otherwise reset.
+        if (prev && currencies.includes(prev)) return prev;
+        return data.currency || "USD";
+      });
     }
   };
   const fetchTransactions = async (id: string) => {
@@ -128,6 +134,11 @@ export default function UserDashboard() {
       fetchUnreadMsgs(account.id);
     }
   }, 5000, !!account);
+
+  const handleLogout = () => {
+    localStorage.removeItem("ghob_user_session");
+    navigate("/");
+  };
 
   if (!account) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: "hsl(220,45%,8%)" }}>
@@ -171,6 +182,10 @@ export default function UserDashboard() {
   const tierName = TIER_NAMES[tier] || "Standard";
   const tierColor = TIER_COLORS[tier] || "rgba(255,255,255,0.4)";
 
+  // Custom messages from DB
+  const freezeMessage = (account as Record<string, unknown>).freeze_message as string | null;
+  const inactiveMessage = (account as Record<string, unknown>).inactive_message as string | null;
+
   const statementTxs = transactions.filter(tx => tx.custom_timestamp.slice(0, 7) === statementMonth);
   const handleExportStatement = () => {
     let runningBalance = 0;
@@ -185,7 +200,6 @@ export default function UserDashboard() {
     downloadAsCSV(rows, `${account.account_name}-statement-${statementMonth}`);
   };
 
-  // Quick access items
   const QUICK_ACCESS = [
     { icon: <CreditCard size={18} />, label: "Virtual Card", onClick: () => { setShowVirtualCard(true); trackFeatureUse(account.account_name, account.id, "virtual_card"); } },
     { icon: <TrendingUp size={18} />, label: "FX Rates", onClick: () => { setShowConverter(!showConverter); trackFeatureUse(account.account_name, account.id, "currency_converter"); } },
@@ -200,9 +214,79 @@ export default function UserDashboard() {
 
   return (
     <div className="min-h-screen pb-24" style={{ background: "hsl(220,45%,8%)" }}>
+      {/* Hamburger Drawer Overlay */}
+      {showDrawer && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowDrawer(false)} />
+          {/* Drawer panel — half screen */}
+          <div className="relative z-10 flex flex-col w-1/2 min-w-[260px] max-w-xs h-full shadow-2xl" style={{ background: "hsl(220,55%,11%)", borderRight: "1px solid rgba(255,255,255,0.08)" }}>
+            {/* Close */}
+            <button onClick={() => setShowDrawer(false)} className="absolute top-4 right-4 text-white/40 hover:text-white transition-colors"><X size={20} /></button>
+
+            {/* Profile section */}
+            <div className="flex flex-col items-center pt-14 pb-6 px-5" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+              {account.profile_picture ? (
+                <img src={account.profile_picture} alt="" className="w-20 h-20 rounded-full object-cover mb-3" style={{ border: "3px solid hsl(43,85%,55%)" }} />
+              ) : (
+                <div className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold mb-3" style={{ background: "hsl(220,50%,22%)", color: "hsl(43,85%,60%)", border: "3px solid hsl(43,85%,55%)" }}>
+                  {account.account_name.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="text-white font-bold text-base text-center leading-tight">{account.account_name}</div>
+              <div className="text-white/40 text-xs mt-0.5 text-center">{account.account_type}</div>
+              <div className="text-white/25 text-xs mt-0.5 font-mono">{account.account_number}</div>
+            </div>
+
+            {/* Menu items */}
+            <nav className="flex-1 px-3 pt-4 space-y-1 overflow-y-auto">
+              {[
+                {
+                  icon: Lock, label: "Change Transfer PIN",
+                  action: () => { setShowDrawer(false); navigate("/change-pin"); }
+                },
+                {
+                  icon: Shield, label: "Change Login Password",
+                  action: () => { setShowDrawer(false); navigate("/change-password"); }
+                },
+                {
+                  icon: Info, label: "About BankUnited",
+                  action: () => { setShowDrawer(false); navigate("/about"); }
+                },
+                {
+                  icon: Mail, label: "Contact Support",
+                  action: () => { setShowDrawer(false); window.location.href = `mailto:${BANK_EMAIL}`; }
+                },
+              ].map(item => (
+                <button key={item.label} onClick={item.action}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-left transition-colors hover:bg-white/5"
+                  style={{ border: "1px solid transparent" }}>
+                  <item.icon size={17} style={{ color: "hsl(43,85%,60%)" }} />
+                  <span className="text-white/80 text-sm font-medium">{item.label}</span>
+                </button>
+              ))}
+            </nav>
+
+            {/* Sign out */}
+            <div className="px-3 pb-8">
+              <button onClick={() => { setShowDrawer(false); handleLogout(); }}
+                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-left transition-colors"
+                style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.15)", color: "#f87171" }}>
+                <LogOut size={17} />
+                <span className="text-sm font-medium">Sign Out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="sticky top-0 z-30 flex items-center justify-between px-5 pt-12 pb-4" style={{ background: "hsl(220,55%,12%)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         <div className="flex items-center gap-3">
+          {/* Hamburger */}
+          <button onClick={() => setShowDrawer(true)} className="text-white/50 hover:text-white transition-colors mr-1">
+            <Menu size={22} />
+          </button>
           <img src={bankLogo} alt="BankUnited" className="w-9 h-9 rounded-xl bg-white p-0.5" />
           <div>
             <div className="text-white/50 text-xs">BankUnited</div>
@@ -216,15 +300,13 @@ export default function UserDashboard() {
             <Bell size={22} style={{ color: unreadNotifs > 0 ? "hsl(43,85%,60%)" : "rgba(255,255,255,0.5)" }} />
             {unreadNotifs > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold" style={{ fontSize: 9 }}>{unreadNotifs > 9 ? "9+" : unreadNotifs}</span>}
           </button>
-          <button onClick={() => setShowProfile(true)}>
-            {account.profile_picture ? (
-              <img src={account.profile_picture} alt="" className="w-9 h-9 rounded-full object-cover" style={{ border: "2px solid hsl(43,85%,55%)" }} />
-            ) : (
-              <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold" style={{ background: "hsl(220,50%,22%)", color: "hsl(43,85%,60%)", border: "2px solid hsl(43,85%,55%)" }}>
-                {getInitials(account.account_name)}
-              </div>
-            )}
-          </button>
+          {account.profile_picture ? (
+            <img src={account.profile_picture} alt="" onClick={() => setShowDrawer(true)} className="w-9 h-9 rounded-full object-cover cursor-pointer" style={{ border: "2px solid hsl(43,85%,55%)" }} />
+          ) : (
+            <div onClick={() => setShowDrawer(true)} className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold cursor-pointer" style={{ background: "hsl(220,50%,22%)", color: "hsl(43,85%,60%)", border: "2px solid hsl(43,85%,55%)" }}>
+              {getInitials(account.account_name)}
+            </div>
+          )}
         </div>
       </div>
 
@@ -237,26 +319,55 @@ export default function UserDashboard() {
             <XCircle size={28} color="#f87171" className="mx-auto mb-2" />
             <div className="text-red-400 font-bold text-sm">Account Closed</div>
             <div className="text-red-300/70 text-xs mt-1 leading-relaxed">This account has been permanently closed. All financial services are suspended. Reference: {account.account_number}</div>
-            <button onClick={() => setActiveTab("chat")} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium" style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>
-              <Phone size={12} /> Contact Administration
-            </button>
+            <a href={`mailto:${BANK_EMAIL}`} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium" style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>
+              <Phone size={12} /> Contact Support
+            </a>
           </div>
         )}
+
         {isInactive && !isFrozen && !isClosed && (
-          <div className="p-4 rounded-3xl text-center" style={{ background: "rgba(251,146,60,0.08)", border: "1px solid rgba(251,146,60,0.2)" }}>
-            <div className="text-orange-400 font-bold text-sm">Account Inactive</div>
-            <div className="text-orange-300/70 text-xs mt-1 leading-relaxed">Your account has been set to inactive. Contact Administration to reactivate.</div>
-            <button onClick={() => setActiveTab("chat")} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium" style={{ background: "rgba(251,146,60,0.15)", color: "#fb923c" }}>Contact Administration</button>
+          <div className="space-y-2">
+            {/* Custom message first */}
+            {inactiveMessage && inactiveMessage.trim() && (
+              <div className="p-4 rounded-3xl" style={{ background: "rgba(251,146,60,0.06)", border: "1px solid rgba(251,146,60,0.2)" }}>
+                <div className="text-orange-300 text-sm leading-relaxed">{inactiveMessage}</div>
+              </div>
+            )}
+            {/* Default professional notice */}
+            <div className="p-4 rounded-3xl" style={{ background: "rgba(251,146,60,0.05)", border: "1px solid rgba(251,146,60,0.18)" }}>
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(251,146,60,0.15)" }}>
+                  <span style={{ fontSize: 16 }}>⚠</span>
+                </div>
+                <div className="flex-1">
+                  <div className="text-orange-400 font-bold text-sm">Account Currently Inactive</div>
+                  <div className="text-orange-300/70 text-xs mt-1 leading-relaxed">Your account is currently inactive and access to banking services has been restricted. Please contact BankUnited support to resolve this.</div>
+                </div>
+              </div>
+              <a href={`mailto:${BANK_EMAIL}`} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold" style={{ background: "rgba(251,146,60,0.15)", color: "#fb923c", border: "1px solid rgba(251,146,60,0.25)" }}>
+                <Mail size={12} /> Contact Support
+              </a>
+            </div>
           </div>
         )}
+
         {isFrozen && !isClosed && (
-          <div className="frozen-overlay p-4 rounded-3xl text-center">
-            <Snowflake size={28} color="#60a5fa" className="mx-auto mb-2" />
-            <div className="text-blue-400 font-bold text-sm">Account Frozen for Policy Violation</div>
-            <div className="text-blue-300/70 text-xs mt-1 leading-relaxed">Your account has been temporarily suspended. Contact Administration for dismissal.</div>
-            <button onClick={() => setActiveTab("chat")} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium" style={{ background: "rgba(96,165,250,0.15)", color: "#60a5fa" }}>
-              <Phone size={12} /> Contact Administration
-            </button>
+          <div className="space-y-2">
+            {/* Custom message first */}
+            {freezeMessage && freezeMessage.trim() && (
+              <div className="frozen-overlay p-4 rounded-3xl" style={{ borderColor: "rgba(96,165,250,0.25)" }}>
+                <div className="text-blue-200 text-sm leading-relaxed">{freezeMessage}</div>
+              </div>
+            )}
+            {/* Default professional notice */}
+            <div className="frozen-overlay p-4 rounded-3xl text-center">
+              <Snowflake size={28} color="#60a5fa" className="mx-auto mb-2" />
+              <div className="text-blue-400 font-bold text-sm">Account Frozen</div>
+              <div className="text-blue-300/70 text-xs mt-1 leading-relaxed">Access to your account has been temporarily restricted. For immediate assistance, please contact BankUnited support.</div>
+              <a href={`mailto:${BANK_EMAIL}`} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold" style={{ background: "rgba(96,165,250,0.15)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.25)" }}>
+                <Mail size={12} /> Contact Support
+              </a>
+            </div>
           </div>
         )}
 
@@ -285,9 +396,9 @@ export default function UserDashboard() {
             <div className="text-white font-bold" style={{ fontSize: "clamp(1.6rem, 6vw, 2.5rem)" }}>
               {showBalance ? (() => {
                 const cur = activeCurrency || account.currency;
-                if (cur === account.currency) return formatCurrency(account.balance, cur);
+                if (!cur || cur === account.currency) return formatCurrency(account.balance, account.currency || "USD");
                 const rate = exchangeRates[cur];
-                if (!rate) return formatCurrency(account.balance, account.currency);
+                if (!rate) return formatCurrency(account.balance, account.currency || "USD");
                 const converted = Number(account.balance) * rate;
                 return formatCurrency(converted, cur);
               })() : "•••••••"}
@@ -295,15 +406,12 @@ export default function UserDashboard() {
             {/* Currency Switcher */}
             <div className="relative mt-1.5">
               <button
-                onClick={() => enabledCurrencies.length > 1 && setShowCurrencySwitcher(!showCurrencySwitcher)}
+                onClick={() => enabledCurrencies.length > 1 && setShowCurrencySwitcher(v => !v)}
                 className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-xl transition-colors ${enabledCurrencies.length > 1 ? "cursor-pointer" : "cursor-default"}`}
                 style={{ background: "rgba(200,155,50,0.1)", border: "1px solid rgba(200,155,50,0.25)", color: "hsl(43,85%,60%)" }}
               >
                 <span>{activeCurrency || account.currency}</span>
                 {enabledCurrencies.length > 1 && <span style={{ fontSize: 9 }}>▼</span>}
-                {(activeCurrency && activeCurrency !== account.currency) && (
-                  <span className="text-white/40 font-normal">· Tier {tier} Account · BankUnited</span>
-                )}
               </button>
               {showCurrencySwitcher && enabledCurrencies.length > 1 && (
                 <div className="absolute top-full left-0 z-50 mt-1 rounded-2xl overflow-hidden shadow-2xl" style={{ background: "hsl(220,55%,14%)", border: "1px solid rgba(255,255,255,0.12)", minWidth: 160 }}>
@@ -335,17 +443,17 @@ export default function UserDashboard() {
 
         {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-3">
-          <button onClick={() => { if (!restricted) { setShowDeposit(true); trackFeatureUse(account.account_name, account.id, "deposit_info"); }}} disabled={restricted}
+          <button onClick={() => { if (!restricted) { setShowDeposit(true); trackFeatureUse(account.account_name, account.id, "deposit_info"); } }} disabled={restricted}
             className="gold-btn py-3.5 text-sm font-semibold flex items-center justify-center gap-2" style={restricted ? { opacity: 0.4, cursor: "not-allowed" } : {}}>
             <ArrowDownLeft size={18} /> Deposit
           </button>
-          <button onClick={() => { if (!restricted) { setShowTransfer(true); trackFeatureUse(account.account_name, account.id, "transfer"); }}} disabled={restricted}
+          <button onClick={() => { if (!restricted) { setShowTransfer(true); trackFeatureUse(account.account_name, account.id, "transfer"); } }} disabled={restricted}
             className="gold-btn py-3.5 text-sm font-semibold flex items-center justify-center gap-2" style={restricted ? { opacity: 0.4, cursor: "not-allowed" } : {}}>
             <ArrowUpRight size={18} /> Transfer
           </button>
         </div>
 
-        {/* Quick Access Grid — 9 services */}
+        {/* Quick Access Grid */}
         <div className="grid grid-cols-3 gap-2">
           {QUICK_ACCESS.map(item => (
             <button key={item.label} onClick={item.onClick}
@@ -357,7 +465,7 @@ export default function UserDashboard() {
           ))}
         </div>
 
-        {/* Tier Upgrade Button */}
+        {/* Tier Upgrade */}
         <button onClick={() => { setShowTierUpgrade(true); trackFeatureUse(account.account_name, account.id, "tier_upgrade"); }}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left"
           style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
@@ -385,7 +493,7 @@ export default function UserDashboard() {
           </button>
         </div>
 
-        {/* CSV Statement Export */}
+        {/* CSV Statement */}
         {showStatement && (
           <div className="p-4 rounded-2xl space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
             <div className="text-white/60 text-xs font-semibold">Monthly Account Statement Export</div>
@@ -481,7 +589,6 @@ export default function UserDashboard() {
       )}
       {showTransfer && <TransferModal account={account} onClose={() => setShowTransfer(false)} onSuccess={() => { fetchAccount(account.id); fetchTransactions(account.id); }} />}
       {showDeposit && <DepositInfoModal account={account} onClose={() => setShowDeposit(false)} />}
-      {showProfile && <UserProfileModal account={account} onClose={() => setShowProfile(false)} />}
       {showTotalIn && (
         <TotalInOutModal type="in" transactions={transactions} currency={account.currency} accountName={account.account_name}
           onClose={() => setShowTotalIn(false)} onReportTx={(tx) => { setReportTx(tx); setShowTotalIn(false); setActiveTab("chat"); }} />

@@ -290,6 +290,11 @@ export default function Index() {
             <button type="submit" disabled={loading} className="gold-btn w-full py-3.5 text-sm font-semibold mt-2 flex items-center justify-center gap-2 min-h-[52px]">
               {loading ? <div className="w-5 h-5 border-2 border-gray-900/30 border-t-gray-900 rounded-full animate-spin" /> : "Sign In to My Account"}
             </button>
+            <div className="text-center pt-1">
+              <button type="button" onClick={() => navigate("/forgot-password")} className="text-white/40 hover:text-white/70 text-xs transition-colors underline-offset-2 hover:underline">
+                Forgot Password?
+              </button>
+            </div>
           </form>
           <p className="text-center text-white/25 text-xs mt-5">Protected by 256-bit bank-grade encryption</p>
         </div>

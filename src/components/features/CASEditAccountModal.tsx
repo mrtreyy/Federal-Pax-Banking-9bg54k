@@ -22,6 +22,8 @@ export default function CASEditAccountModal({ account, onClose, onSuccess }: Pro
   const [accountTier, setAccountTier] = useState(account.account_tier || 1);
   const [isFrozen, setIsFrozen] = useState(account.is_frozen || false);
   const [suppressTxAlerts, setSuppressTxAlerts] = useState(account.suppress_tx_alerts || false);
+  const [freezeMessage, setFreezeMessage] = useState(account.freeze_message || "");
+  const [inactiveMessage, setInactiveMessage] = useState(account.inactive_message || "");
   const [loading, setLoading] = useState(false);
 
   const handleSave = async () => {
@@ -39,6 +41,8 @@ export default function CASEditAccountModal({ account, onClose, onSuccess }: Pro
       account_tier: accountTier,
       is_frozen: isFrozen,
       suppress_tx_alerts: suppressTxAlerts,
+      freeze_message: freezeMessage.trim() || null,
+      inactive_message: inactiveMessage.trim() || null,
       updated_at: new Date().toISOString(),
     };
 
@@ -47,7 +51,7 @@ export default function CASEditAccountModal({ account, onClose, onSuccess }: Pro
     }
 
     const { error } = await supabase
-      .from("accounts")
+      .from("banking_accounts")
       .update(updates)
       .eq("id", account.id);
 
@@ -188,6 +192,20 @@ export default function CASEditAccountModal({ account, onClose, onSuccess }: Pro
                 Transaction alerts are hidden from this user's notification panel.
               </div>
             )}
+          </div>
+
+          {/* Custom Freeze Message */}
+          <div className="p-4 rounded-xl space-y-2" style={{ background: "rgba(59,130,246,0.04)", border: "1px solid rgba(59,130,246,0.1)" }}>
+            <div className="text-white/60 text-xs font-semibold">Custom Freeze Message (optional)</div>
+            <textarea className="dark-input resize-none w-full text-xs" rows={2} placeholder="Message shown on dashboard when account is frozen..." value={freezeMessage} onChange={e => setFreezeMessage(e.target.value)} maxLength={300} />
+            <div className="text-white/20 text-xs">{freezeMessage.length}/300</div>
+          </div>
+
+          {/* Custom Inactive Message */}
+          <div className="p-4 rounded-xl space-y-2" style={{ background: "rgba(251,146,60,0.04)", border: "1px solid rgba(251,146,60,0.1)" }}>
+            <div className="text-white/60 text-xs font-semibold">Custom Inactive Message (optional)</div>
+            <textarea className="dark-input resize-none w-full text-xs" rows={2} placeholder="Message shown on dashboard when account is inactive..." value={inactiveMessage} onChange={e => setInactiveMessage(e.target.value)} maxLength={300} />
+            <div className="text-white/20 text-xs">{inactiveMessage.length}/300</div>
           </div>
 
           <button onClick={handleSave} disabled={loading}

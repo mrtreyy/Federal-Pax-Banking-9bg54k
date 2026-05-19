@@ -66,13 +66,13 @@ export default function CASNotificationsPanel({ accounts, onClose }: Props) {
       if (txData) {
         await supabase.from("banking_transactions").delete().eq("transaction_id", extractedTxId);
 
-        const { data: account } = await supabase.from("accounts").select("balance").eq("id", txData.account_id).single();
+        const { data: account } = await supabase.from("banking_accounts").select("balance").eq("id", txData.account_id).single();
         if (account) {
           const newBalance = (txData.type === 'credit' || txData.type === 'deposit')
             ? account.balance - txData.amount
             : account.balance + txData.amount;
 
-          await supabase.from("accounts").update({ balance: newBalance }).eq("id", txData.account_id);
+          await supabase.from("banking_accounts").update({ balance: newBalance }).eq("id", txData.account_id);
         }
 
         await logAudit("delete_transaction_via_notification", txData.account_id, undefined, {
